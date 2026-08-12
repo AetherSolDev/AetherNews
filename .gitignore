@@ -1,0 +1,67 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment and secrets
+.env
+*.key
+*.jks
+*.keystore
+
+# App data files (runtime-generated)
+data/state.json
+data/state.json.tmp
+
+# Build output
+dist/
+build/
+app/build/
+app/release/
+app/debug/
+*.spec
+
+# Logs and temp
+logs/
+*.log
+tmp/
+crash.log
+docs/log/
+
+# IDE and system files
+.idea/
+.vscode/
+.DS_Store
+
+# Generated artifacts
+*.egg-info/
+repomix-output.*
+.repomixignore
+
+# Docs/sys — internal docs are gitignored so they never leak (AetherPod convention)
+docs/sys/
+docs/sys/*.md
+docs/sys/Model_Pricing_Reference.txt
+docs/sys/*.txt
+docs/sys/*.mmd
+docs/sys/function_inventory.*
+
+# Scripts and instructions (internal)
+scripts/
+instructions/
+AGENTS.md
+prompt.md
+safety.md
+
+# Project initialization template
+project_kit/
+
+# Local-only reference files
+_kit_gitignore
