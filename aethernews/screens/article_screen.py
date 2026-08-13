@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 14:29 CT (America/Chicago)
+# Last Edited: 2026-08-13 15:26 CT (America/Chicago)
 # Path: aethernews/screens/article_screen.py
 # Purpose: Article browser for a single feed — read/unread, star, sort, reader.
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 
 from rich.text import Text
-from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
@@ -324,9 +323,6 @@ class ArticleScreen(Screen):
             spinner.update(msg)
         except Exception as exc:
             logger.debug("Article status widget not ready: %s", exc)
-
-    def on_click(self, event: events.Click) -> None:
-        pass
 
     def action_show_help(self) -> None:
         self.app.push_screen(HelpScreen(screen_name="Article"))
