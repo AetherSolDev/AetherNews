@@ -63,6 +63,3 @@ safety.md
 # Project initialization template + audit toolkit (internal, from kit)
 project_kit/
 project_audit/
-
-# Local-only reference files
-_kit_gitignore
