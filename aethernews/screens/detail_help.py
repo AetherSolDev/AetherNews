@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 18:02 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
 # Path: aethernews/screens/detail_help.py
 # Purpose: Modal overlays — ReaderScreen (full article) and HelpScreen.
 
@@ -11,8 +11,10 @@ import re
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import VerticalScroll
+from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Static
+from textual.widgets import Footer, Static
 
 from aethernews import __version__
 from aethernews.models import Article
@@ -56,8 +58,8 @@ class ReaderScreen(Screen[None]):
         Binding("escape,enter,q", "dismiss", "Close"),
         Binding("o", "open_link", "Open in browser", key_display="o"),
         Binding("s", "toggle_star", "Star"),
-        Binding("j", "scroll_down", "Down", key_display="j"),
-        Binding("k", "scroll_up", "Up", key_display="k"),
+        Binding("j,down", "scroll_down", "Down", key_display="j/↓"),
+        Binding("k,up", "scroll_up", "Up", key_display="k/↑"),
         Binding("n", "next_unread", "Next unread", key_display="n"),
         Binding("question_mark", "show_help", "Help", key_display="?"),
     ]
@@ -69,20 +71,15 @@ class ReaderScreen(Screen[None]):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="reader-header", classes="dialog-title")
-        yield Static("", id="reader-body")
-        yield Static("", id="reader-footer", classes="status")
+        with VerticalScroll(id="reader-body"):
+            yield Static("", id="reader-body-content")
+        yield Footer()
 
     def on_mount(self) -> None:
         art = self._article
-        self._data.mark_read(art.article_id or "")
-
-        header = Text()
-        if self._data.is_starred(art.article_id or ""):
-            header.append("★ ", style="bold yellow")
-        else:
-            header.append("  ", style="")
-        header.append(art.title or "(no title)", style="bold")
-        self.query_one("#reader-header", Static).update(header)
+        # Matches AetherPod: viewing an article does NOT mark it read.
+        # Only an explicit space/m toggle does.
+        self._update_star_header()
 
         body = Text()
         meta = []
@@ -101,24 +98,22 @@ class ReaderScreen(Screen[None]):
             body.append(article_text, style="")
         else:
             body.append("  (No content)", style="dim")
-        self.query_one("#reader-body", Static).update(body)
-
-        self._update_footer()
-
-    def _update_footer(self) -> None:
-        art = self._article
-        star = "★" if self._data.is_starred(art.article_id or "") else "☆"
-        footer = Text(
-            f"[{star}] star  ·  o open in browser  ·  j/k scroll  ·  "
-            f"n next unread  ·  q close",
-            style="dim",
-        )
-        self.query_one("#reader-footer", Static).update(footer)
+        self.query_one("#reader-body-content", Static).update(body)
 
     def action_toggle_star(self) -> None:
         now_starred = self._data.toggle_starred(self._article.article_id or "")
         self.notify("Starred ★" if now_starred else "Unstarred", severity="information", timeout=1)
-        self._update_footer()
+        self._update_star_header()
+
+    def _update_star_header(self) -> None:
+        art = self._article
+        header = Text()
+        if self._data.is_starred(art.article_id or ""):
+            header.append("★ ", style="bold yellow")
+        else:
+            header.append("  ", style="")
+        header.append(art.title or "(no title)", style="bold")
+        self.query_one("#reader-header", Static).update(header)
 
     def action_open_link(self) -> None:
         import webbrowser
@@ -131,14 +126,29 @@ class ReaderScreen(Screen[None]):
         self.notify("Opened in browser", severity="information", timeout=2)
 
     def action_scroll_down(self) -> None:
-        self.query_one("#reader-body", Static).scroll_down()
+        body = self.query_one("#reader-body", VerticalScroll)
+        if body.scroll_target_y >= body.max_scroll_y:
+            # At the bottom — jump to the next unread article.
+            self.action_next_unread()
+            return
+        body.scroll_down()
 
     def action_scroll_up(self) -> None:
-        self.query_one("#reader-body", Static).scroll_up()
+        self.query_one("#reader-body", VerticalScroll).scroll_up()
 
     def action_next_unread(self) -> None:
+        # Post to the ArticleScreen below so it can jump to the next unread.
+        from aethernews.screens.article_screen import ArticleScreen
+
+        target = next(
+            (s for s in self.app.screen_stack if isinstance(s, ArticleScreen)),
+            None,
+        )
         self.dismiss()
-        self.app.post_message(NextUnreadRequested(self._article.article_id or ""))
+        if target is not None:
+            target.post_message(
+                NextUnreadRequested(self._article.article_id or "")
+            )
 
     def action_show_help(self) -> None:
         self.app.push_screen(HelpScreen(screen_name="Reader"))
@@ -147,10 +157,11 @@ class ReaderScreen(Screen[None]):
         self.app.pop_screen()
 
 
-class NextUnreadRequested:
+class NextUnreadRequested(Message):
     """Posted when the reader asks to jump to the next unread article."""
 
     def __init__(self, current_id: str) -> None:
+        super().__init__()
         self.current_id = current_id
 
 
@@ -165,10 +176,14 @@ class HelpScreen(Screen[None]):
             ("i", "Import OPML file"),
             ("e", "Export OPML file"),
             ("u", "Refresh all feeds"),
-            ("s", "Sort feeds: subscribe order \u2194 A\u2192Z \u2194 Z\u2192A"),
+            ("s", "Sort: newest-first \u2194 subscribe order"),
             ("f", "Filter feeds by name"),
-            ("c", "Filter by category"),
-            ("Enter", "Browse articles"),
+            ("c", "Categorize the selected feed"),
+            ("Space", "Collapse / expand a category"),
+            ("\u2192 / \u2190", "Expand / collapse a category"),
+            ("\u2191 / \u2193", "Move between rows"),
+            ("Enter", "Feed: browse articles \u00b7 Category: toggle"),
+            ("\u25cf", "Recently updated (last 24h)"),
             ("q", "Quit AetherNews"),
             ("?", "Show this help"),
         ],
@@ -177,16 +192,18 @@ class HelpScreen(Screen[None]):
             ("Enter", "Open article in reader"),
             ("n", "Jump to next unread article"),
             ("Space / m", "Toggle read / unread"),
+            ("M", "Mark all articles unread"),
             ("*", "Toggle starred"),
             ("u", "Refresh this feed"),
-            ("s", "Sort: unread-first \u2194 newest \u2194 A\u2192Z"),
+            ("s", "Sort: newest \u2194 unread-first \u2194 A\u2192Z"),
+            ("\u2191 / \u2193", "Move selection (arrow keys)"),
             ("t", "Toggle dark/light theme"),
             ("q", "Quit AetherNews"),
             ("?", "Show this help"),
         ],
         "Reader": [
             ("Esc / q", "Close reader"),
-            ("j / k", "Scroll down / up"),
+            ("j / k / \u2191 / \u2193", "Scroll down / up"),
             ("o", "Open article URL in browser"),
             ("s", "Toggle starred"),
             ("n", "Next unread article"),

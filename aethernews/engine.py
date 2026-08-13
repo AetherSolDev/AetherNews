@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 18:02 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
 # Path: aethernews/engine.py
 # Purpose: DataManager — state persistence for feeds, unread/starred articles, categories.
 
@@ -204,6 +204,27 @@ class DataManager:
         with self._lock:
             return article_id in self._starred
 
+    def mark_all_unread(self, url: str) -> int:
+        """Mark every cached article in *url*'s feed as unread.
+
+        Returns the number of articles marked.  Useful to recover a
+        backlog whose read state was corrupted (e.g. the old
+        ``_mark_new_unread`` mutation bug).
+        """
+        with self._lock:
+            entry = self._feed_cache.get(url)
+            if entry is None:
+                return 0
+            count = 0
+            for a in entry.get("articles", []):
+                aid = a.get("article_id")
+                if aid and aid not in self._unread:
+                    self._unread.add(aid)
+                    count += 1
+        self.save()
+        logger.info("Marked %d articles unread for %s", count, url)
+        return count
+
     def get_starred(self) -> set[str]:
         """Return a copy of the starred article-id set."""
         with self._lock:
@@ -235,6 +256,41 @@ class DataManager:
         """Return the sorted unique list of category names in use."""
         with self._lock:
             return sorted({c for c in self._categories.values() if c})
+
+    def rename_category(self, old: str, new: str) -> int:
+        """Rename every feed assigned to *old* to *new*.
+
+        Returns the number of feeds re-tagged.  If *new* is empty the
+        category is cleared (feeds fall back to Uncategorized).
+        """
+        with self._lock:
+            count = 0
+            for url, cat in list(self._categories.items()):
+                if cat == old:
+                    if new:
+                        self._categories[url] = new
+                    else:
+                        del self._categories[url]
+                    count += 1
+        self.save()
+        logger.info("Renamed category %r → %r (%d feeds)", old, new, count)
+        return count
+
+    def merge_category(self, old: str, new: str) -> int:
+        """Re-tag all feeds in *old* into the existing *new* category.
+
+        Returns the number of feeds moved.  *new* must already exist (or
+        be empty to clear); this does not create new categories.
+        """
+        with self._lock:
+            count = 0
+            for url, cat in self._categories.items():
+                if cat == old:
+                    self._categories[url] = new
+                    count += 1
+        self.save()
+        logger.info("Merged category %r into %r (%d feeds)", old, new, count)
+        return count
 
     # ── conditional fetch headers ──────────────────────────────────
 
@@ -360,30 +416,31 @@ class DataManager:
             for a in result.articles
         ]
         with self._lock:
-            entry = self._feed_cache.get(url)
-            if entry is None or not isinstance(entry.get("articles"), list):
-                entry = {
-                    "title": result.title,
-                    "checked_at": self._utc_now().isoformat(),
-                    "articles": [],
-                }
-            else:
-                entry["title"] = result.title
-            entry["checked_at"] = self._utc_now().isoformat()
-            entry["articles"] = self._trim_articles(new_articles)
-            self._drop_pruned_unread(url, entry["articles"])
-            self._mark_new_unread(url, entry["articles"])
+            prev = self._feed_cache.get(url)
+            if prev is None or not isinstance(prev.get("articles"), list):
+                prev = None
+            kept = self._trim_articles(new_articles)
+            self._drop_pruned_unread(url, kept)
+            self._mark_new_unread(url, kept, prev)
+            entry = {
+                "title": result.title,
+                "checked_at": self._utc_now().isoformat(),
+                "articles": kept,
+            }
             self._feed_cache[url] = entry
         self.save()
 
-    def _mark_new_unread(self, url: str, kept: list[dict[str, Any]]) -> None:
+    def _mark_new_unread(
+        self, url: str, kept: list[dict[str, Any]], prev: dict[str, Any] | None
+    ) -> None:
         """Add newly-seen article IDs to the unread set.
 
         Only IDs not present in the *previous* cache entry for *url* are
         marked unread, so already-known (possibly read) articles keep
-        their read state.  Caller must hold ``_lock``.
+        their read state.  ``prev`` must be the cache entry *before* the
+        current save (not the mutated in-progress entry).  Caller must
+        hold ``_lock``.
         """
-        prev = self._feed_cache.get(url)
         known: set[str] = set()
         if prev is not None:
             known = {a.get("article_id") for a in prev.get("articles", [])}
@@ -459,6 +516,95 @@ class DataManager:
         """Return the total unread count across all feeds."""
         with self._lock:
             return len(self._unread)
+
+    # ── feed freshness / recency ────────────────────────────────
+
+    RECENT_HOURS = 24
+    """Default window for the "recently updated" marker on the overview."""
+
+    def feed_updated(self, url: str) -> datetime.datetime | None:
+        """Return when *url* was last updated (newest article publish date).
+
+        Falls back to the cache entry's ``checked_at`` only when the feed
+        has no cached articles (e.g. a brand-new subscription).  ``None``
+        when there is no cache entry at all.
+
+        Article publish date is preferred over fetch time so overview
+        ordering and recency reflect *content* freshness, not how recently
+        the cache happened to be checked.
+        """
+        with self._lock:
+            entry = self._feed_cache.get(url)
+        if entry is None:
+            return None
+        latest: datetime.datetime | None = None
+        for a in entry.get("articles", []):
+            published = _parse_feed_date(a.get("published") or "")
+            if published is not None and (
+                latest is None or published > latest
+            ):
+                latest = published
+        if latest is not None:
+            return latest
+        return self._parse_checked_at(entry.get("checked_at"))
+
+    def recently_updated(self, url: str, hours: float | None = None) -> bool:
+        """Return True if *url* has fresh content within *hours* (default 24).
+
+        A feed is "recent" when its newest cached article was published
+        inside the window.  A feed with no cached articles is recent only
+        when its cache was checked inside the window.
+        """
+        if hours is None:
+            hours = self.RECENT_HOURS
+        with self._lock:
+            entry = self._feed_cache.get(url)
+        if entry is None:
+            return False
+        latest: datetime.datetime | None = None
+        for a in entry.get("articles", []):
+            published = _parse_feed_date(a.get("published") or "")
+            if published is not None and (
+                latest is None or published > latest
+            ):
+                latest = published
+        if latest is None:
+            latest = self._parse_checked_at(entry.get("checked_at"))
+        if latest is None:
+            return False
+        cutoff = self._utc_now() - datetime.timedelta(hours=hours)
+        return latest > cutoff
+
+    def group_summary(self, category: str) -> dict[str, Any]:
+        """Aggregate stats for a category group header.
+
+        Returns ``{"urls", "unread", "recent", "updated"}`` where ``urls``
+        is the list of feed URLs in *category*, ``unread`` the total unread
+        count, ``recent`` whether any feed in the group has fresh content,
+        and ``updated`` the newest ``feed_updated`` timestamp among them.
+        """
+        urls = [
+            u for u in self._feeds if self.get_category(u) == category
+        ]
+        if category == "":
+            urls = [
+                u for u in self._feeds if not self.get_category(u)
+            ]
+        unread = sum(self.unread_by_feed(u) for u in urls)
+        updated: datetime.datetime | None = None
+        recent = False
+        for u in urls:
+            u_time = self.feed_updated(u)
+            if u_time is not None and (updated is None or u_time > updated):
+                updated = u_time
+            if self.recently_updated(u):
+                recent = True
+        return {
+            "urls": urls,
+            "unread": unread,
+            "recent": recent,
+            "updated": updated,
+        }
 
     # ── OPML import / export ─────────────────────────────────────────
 

@@ -1,7 +1,7 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 17:40 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:03 CT (America/Chicago)
 # Path: aethernews/__init__.py
 # Purpose: Package marker for the AetherNews source package.
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 """Application version string.  Bumped when schema or features change."""

@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 17:40 CT (America/Chicago)
+# Last Edited: 2026-08-13 13:42 CT (America/Chicago)
 # Path: aethernews/app.py
 # Purpose: Main Textual TUI application — screen orchestration, CSS, theme toggle.
 
@@ -40,22 +40,14 @@ class AetherNews(App):
         background: $surface;
     }
 
-    ListView {
+    Tree {
         height: 1fr;
         margin: 0 1;
     }
 
-    ListView > ListItem {
-        padding: 0 1;
-    }
-
-    ListView > ListItem:hover {
-        background: $accent 15%;
-    }
-
-    /* Zebra striping on feed list (Textual has no :nth-child) */
-    ListView > ListItem.zebra {
-        background: $panel;
+    Tree > .tree--cursor {
+        background: $accent 20%;
+        text-style: bold;
     }
 
     /* ── Feed filter input ─────────────────────────────── */
@@ -100,12 +92,13 @@ class AetherNews(App):
     }
 
     /* ── Dialogs ──────────────────────────────────────── */
-    AddFeedDialog, PathInputDialog {
+    AddFeedDialog, PathInputDialog, CategoryDialog {
         align: center middle;
         background: $surface 85%;
     }
 
-    AddFeedDialog .dialog-title, PathInputDialog .dialog-title {
+    AddFeedDialog .dialog-title, PathInputDialog .dialog-title,
+    CategoryDialog .dialog-title {
         text-style: bold;
         text-align: center;
         width: 100%;
@@ -113,19 +106,25 @@ class AetherNews(App):
         margin-top: 1;
     }
 
-    AddFeedDialog Input, PathInputDialog Input {
+    AddFeedDialog Input, PathInputDialog Input, CategoryDialog Input {
         width: 50;
     }
 
-    AddFeedDialog Button, PathInputDialog Button {
+    AddFeedDialog Button, PathInputDialog Button, CategoryDialog Button {
         width: 16;
         margin-top: 1;
     }
 
-    AddFeedDialog .dialog-error, PathInputDialog .dialog-error {
+    AddFeedDialog .dialog-error, PathInputDialog .dialog-error,
+    CategoryDialog .dialog-error {
         height: 1;
         text-align: center;
         width: 100%;
+    }
+
+    CategoryDialog Select {
+        width: 50;
+        margin-top: 1;
     }
 
     /* ── Reader Screen ─────────────────────────────────── */
@@ -142,15 +141,14 @@ class AetherNews(App):
     }
 
     ReaderScreen #reader-body {
-        width: 70;
-        padding: 0 2 1 2;
+        width: 1fr;
         height: 1fr;
-        overflow-y: auto;
+        margin: 0 4;
     }
 
-    ReaderScreen #reader-footer {
+    ReaderScreen #reader-body-content {
         width: 100%;
-        text-align: center;
+        padding: 0 2 1 2;
     }
 
     /* ── Help Screen ───────────────────────────────────── */

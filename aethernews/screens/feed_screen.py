@@ -1,28 +1,48 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 18:02 CT (America/Chicago)
+# Last Edited: 2026-08-13 13:42 CT (America/Chicago)
 # Path: aethernews/screens/feed_screen.py
-# Purpose: Feed subscription list screen — main entry screen for AetherNews.
+# Purpose: Feed overview screen — category-grouped tree, recency markers, newest-first sort.
 
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.events import Key
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Input, Label, ListItem, ListView
+from textual.widgets import Footer, Header, Input, Tree
+from textual.widgets._tree import TreeNode
 
 from aethernews.engine import DataManager
 from aethernews.models import FeedResult
 from aethernews.rss import fetch_feed_async
 from aethernews.screens.article_screen import ArticleScreen
 from aethernews.screens.detail_help import HelpScreen
-from aethernews.screens.dialogs import AddFeedDialog, PathInputDialog
+from aethernews.screens.dialogs import AddFeedDialog, CategoryDialog, PathInputDialog
 from aethernews.widgets import LoadingSpinner
 
 logger = logging.getLogger(__name__)
+
+UNCATEGORIZED = "Uncategorized"
+
+
+class _GroupData:
+    """Node payload for a category group row."""
+
+    def __init__(self, category: str, urls: list[str]) -> None:
+        self.category = category
+        self.urls = urls
+
+
+class _FeedData:
+    """Node payload for a feed row."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
 
 
 class FeedScreen(Screen):
@@ -32,9 +52,11 @@ class FeedScreen(Screen):
         Binding("e", "export_opml", "Export OPML"),
         Binding("u", "refresh", "Refresh"),
         Binding("r", "remove_feed", "Remove"),
-        Binding("s", "toggle_sort", "Sort A-Z"),
+        Binding("s", "toggle_sort", "Sort"),
         Binding("f", "toggle_filter", "Filter"),
-        Binding("c", "cycle_category_filter", "Category"),
+        Binding("c", "assign_category", "Category"),
+        Binding("right", "expand_node", "Expand", show=False),
+        Binding("left", "collapse_node", "Collapse", show=False),
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help", key_display="?"),
     ]
@@ -42,23 +64,26 @@ class FeedScreen(Screen):
     def __init__(self, data_manager: DataManager) -> None:
         super().__init__()
         self._data = data_manager
-        self._sort_asc: bool | None = None
+        self._sort_newest: bool = True
         self._filter_query: str = ""
-        self._category_filter: str = ""
+        self._categorize_url: str | None = None
+        self._rename_category: str | None = None
         self._refresh_in_flight: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(placeholder="Filter feeds\u2026", id="feed-filter", classes="feed-filter")
         yield LoadingSpinner(id="feed-status")
-        yield ListView(id="feed-list")
+        yield Tree("Feeds", id="feed-tree")
         yield Footer()
 
     async def on_mount(self) -> None:
         # Keep the hidden filter input out of the focus order (AetherPod
         # lesson: display:none widgets still capture focus on mount).
         self.query_one("#feed-filter", Input).can_focus = False
-        self.query_one("#feed-list", ListView).focus()
+        tree = self.query_one("#feed-tree", Tree)
+        tree.show_root = False
+        tree.focus()
         self._render_from_cache()
         asyncio.create_task(self._refresh_feeds())
 
@@ -77,16 +102,77 @@ class FeedScreen(Screen):
         await self._refresh_feeds()
 
     def action_remove_feed(self) -> None:
-        feed_list = self.query_one("#feed-list", ListView)
-        if feed_list.index is None:
+        tree = self.query_one("#feed-tree", Tree)
+        node = tree.cursor_node
+        if node is None or not isinstance(node.data, _FeedData):
             self.notify("No feed selected", severity="warning", timeout=2)
             return
-        item = feed_list.children[feed_list.index]
-        url: str | None = getattr(item, "_feed_url", None)
-        if url:
-            self._data.remove_feed(url)
-            self.notify("Removed feed", severity="information", timeout=2)
-            asyncio.create_task(self._refresh_feeds())
+        url = node.data.url
+        self._data.remove_feed(url)
+        self.notify("Removed feed", severity="information", timeout=2)
+        asyncio.create_task(self._refresh_feeds())
+
+    def action_assign_category(self) -> None:
+        tree = self.query_one("#feed-tree", Tree)
+        node = tree.cursor_node
+        if node is None or node.data is None:
+            self.notify("Select a feed or category", severity="warning", timeout=2)
+            return
+        if isinstance(node.data, _FeedData):
+            url = node.data.url
+            title = self._feed_title_for(url)
+            current = self._data.get_category(url)
+            existing = self._data.get_categories_list()
+            self._categorize_url = url
+            self.app.push_screen(
+                CategoryDialog(title, current, existing), self._on_category_picked
+            )
+        elif isinstance(node.data, _GroupData):
+            category = node.data.category
+            if category == UNCATEGORIZED:
+                self.notify("Uncategorized has no renameable category",
+                            severity="warning", timeout=2)
+                return
+            self._rename_category = category
+            self.app.push_screen(
+                CategoryDialog(
+                    f"Rename \u201c{category}\u201d", category,
+                    self._data.get_categories_list(),
+                ),
+                self._on_category_renamed,
+            )
+
+    def _on_category_picked(self, category: str | None) -> None:
+        if category is None or self._categorize_url is None:
+            return
+        self._data.set_category(self._categorize_url, category)
+        label = category or "Uncategorized"
+        self.notify(f"Category: {label}", severity="information", timeout=2)
+        self._render_from_cache()
+
+    def _on_category_renamed(self, new_name: str | None) -> None:
+        if new_name is None or not self._rename_category:
+            return
+        old = self._rename_category
+        count = self._data.rename_category(old, new_name)
+        label = new_name or "Uncategorized"
+        self.notify(
+            f"Renamed \u201c{old}\u201d \u2192 \u201c{label}\u201d ({count} feed(s))",
+            severity="information", timeout=2,
+        )
+        self._render_from_cache()
+
+    def action_expand_node(self) -> None:
+        tree = self.query_one("#feed-tree", Tree)
+        node = tree.cursor_node
+        if node is not None:
+            node.expand()
+
+    def action_collapse_node(self) -> None:
+        tree = self.query_one("#feed-tree", Tree)
+        node = tree.cursor_node
+        if node is not None:
+            node.collapse()
 
     def action_quit(self) -> None:
         self.app.exit()
@@ -120,13 +206,8 @@ class FeedScreen(Screen):
         self.app.push_screen(HelpScreen(screen_name="Feed"))
 
     def action_toggle_sort(self) -> None:
-        if self._sort_asc is None:
-            self._sort_asc = True
-        elif self._sort_asc:
-            self._sort_asc = False
-        else:
-            self._sort_asc = None
-        label = {None: "subscribe order", True: "A\u2192Z", False: "Z\u2192A"}[self._sort_asc]
+        self._sort_newest = not self._sort_newest
+        label = "newest-first" if self._sort_newest else "subscribe order"
         self.notify(f"Feeds sorted: {label}", severity="information", timeout=2)
         self._render_from_cache()
 
@@ -139,33 +220,13 @@ class FeedScreen(Screen):
             filt.can_focus = True
             filt.focus()
 
-    def action_cycle_category_filter(self) -> None:
-        cats = self._data.get_categories_list()
-        if not cats:
-            self.notify("No categories set", severity="warning", timeout=2)
-            return
-        if self._category_filter:
-            idx = cats.index(self._category_filter)
-            self._category_filter = cats[(idx + 1) % len(cats)] or ""
-        else:
-            self._category_filter = cats[0]
-        if not self._category_filter:
-            self.notify("Category filter: all", severity="information", timeout=1)
-        else:
-            self.notify(
-                f"Category filter: {self._category_filter}",
-                severity="information",
-                timeout=1,
-            )
-        self._render_from_cache()
-
     def _close_filter(self) -> None:
         filt = self.query_one("#feed-filter", Input)
         filt.remove_class("visible")
         filt.can_focus = False
         self._filter_query = ""
         filt.value = ""
-        self.query_one("#feed-list", ListView).focus()
+        self.query_one("#feed-tree", Tree).focus()
         self._render_from_cache()
         self.notify("Filter cleared", severity="information", timeout=1)
 
@@ -192,68 +253,107 @@ class FeedScreen(Screen):
             return cached.title
         return url
 
-    def _display_order(self, urls: list[str]) -> list[str]:
-        """Apply category filter + name filter + sort to the raw feed URL list."""
-        if self._category_filter:
-            urls = [
-                u for u in urls
-                if self._data.get_category(u) == self._category_filter
-            ]
+    def _updated_ts(self, url: str) -> datetime.datetime:
+        """Comparable timestamp for a feed (newest article or check time)."""
+        updated = self._data.feed_updated(url)
+        if updated is None:
+            return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+        return updated
+
+    def _feed_urls(self) -> list[str]:
+        """All feed URLs, filtered by name query, sorted by recency or subscribe order."""
+        urls = self._data.get_feeds()
         if self._filter_query:
             urls = [
                 u for u in urls
                 if self._filter_query in self._feed_title_for(u).lower()
             ]
-        if self._sort_asc is not None:
-            urls = sorted(urls, key=self._feed_title_for, reverse=not self._sort_asc)
+        if self._sort_newest:
+            urls = sorted(urls, key=self._updated_ts, reverse=True)
         return urls
 
-    def _render_from_cache(self) -> None:
-        urls = self._display_order(self._data.get_feeds())
-        feed_list = self.query_one("#feed-list", ListView)
-        try:
-            feed_list.clear()
-        except ValueError:
-            logger.debug("Ignored ListView hover race during clear")
+    def _grouped_urls(self, urls: list[str]) -> list[tuple[str, list[str]]]:
+        """Partition feed URLs into (category, [urls]) groups, newest first.
 
+        The "Uncategorized" group always sorts last.  Groups without any
+        feed after filtering are dropped.
+        """
+        by_cat: dict[str, list[str]] = {}
+        for u in urls:
+            cat = self._data.get_category(u) or UNCATEGORIZED
+            by_cat.setdefault(cat, []).append(u)
+
+        def _latest(group_urls: list[str]) -> datetime.datetime:
+            return max((self._updated_ts(u) for u in group_urls), default=(
+                datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)))
+
+        groups = sorted(by_cat.items(), key=lambda kv: _latest(kv[1]), reverse=True)
+        if UNCATEGORIZED in by_cat:
+            groups = [
+                (c, us) for c, us in groups if c != UNCATEGORIZED
+            ] + [(UNCATEGORIZED, by_cat[UNCATEGORIZED])]
+        return groups
+
+    def _group_label(self, category: str, urls: list[str]) -> Text:
+        n_feeds = len(urls)
+        n_unread = sum(self._data.unread_by_feed(u) for u in urls)
+        recent = any(self._data.recently_updated(u) for u in urls)
+        label = Text()
+        if recent:
+            label.append("● ", style="bold cyan")
+        label.append(f"{category}", style="bold")
+        label.append(
+            f"  ({n_feeds} feed{'s' if n_feeds != 1 else ''}"
+            f", {n_unread} unread)",
+            style="dim",
+        )
+        return label
+
+    def _feed_label(self, url: str) -> Text:
+        cached = self._data.get_cached_result(url)
+        label = Text()
+        if cached is not None:
+            unread = self._data.unread_by_feed(url)
+            recent = self._data.recently_updated(url)
+            if recent:
+                label.append("● ", style="bold cyan")
+            title_style = "bold cyan" if (recent and unread) else (
+                "bold" if unread else "")
+            label.append(cached.title, style=title_style or None)
+            label.append(
+                f"  ({len(cached.articles)}, {unread} unread)",
+                style="dim",
+            )
+        else:
+            label.append(f"  {url}  (waiting...)", style="dim")
+        return label
+
+    def _render_from_cache(self) -> None:
+        tree = self.query_one("#feed-tree", Tree)
+        tree.clear()
+        urls = self._feed_urls()
         if not urls:
             msg = "No feeds \u2014 press 'a' to add one"
-            if self._category_filter:
-                msg = f"No feeds in category \u201c{self._category_filter}\u201d"
-            elif self._filter_query:
+            if self._filter_query:
                 msg = f"No feeds match \u201c{self._filter_query}\u201d \u2014 Esc to clear"
-            feed_list.append(ListItem(Label(msg)))
             self._set_status(msg)
             return
 
-        for idx, url in enumerate(urls):
-            cached = self._data.get_cached_result(url)
-            item = ListItem()
-            if idx % 2 == 1:
-                item.add_class("zebra")
-            item._feed_url = url
-            item._feed_result = cached
-            if cached is not None:
-                total = len(cached.articles)
-                unread = self._data.unread_by_feed(url)
-                cat = self._data.get_category(url)
-                cat_str = f"  [{cat}]" if cat else ""
-                label = Label(
-                    f"{cached.title}{cat_str}  ({total}, {unread} unread)"
-                )
-            else:
-                label = Label(f"  {url}  (waiting...)")
-            item.compose_add_child(label)
-            feed_list.append(item)
+        for category, group_urls in self._grouped_urls(urls):
+            group_node = tree.root.add(self._group_label(category, group_urls),
+                                       _GroupData(category, group_urls),
+                                       expand=False)
+            for u in group_urls:
+                group_node.add_leaf(self._feed_label(u), _FeedData(u))
 
         if urls:
-            self._start_spinner(
+            self._set_status(
                 f"{len(urls)} feed{'s' if len(urls) != 1 else ''}"
-                " \u2014 refreshing..."
+                " \u2014 'a' to add, Enter to browse"
             )
 
     async def _refresh_feeds(self) -> None:
-        urls = self._display_order(self._data.get_feeds())
+        urls = self._feed_urls()
         if not urls:
             return
 
@@ -283,62 +383,41 @@ class FeedScreen(Screen):
         results = await asyncio.gather(*tasks, return_exceptions=True)
         fetched: dict[str, FeedResult | Exception] = dict(zip(to_fetch, results))
 
-        feed_list = self.query_one("#feed-list", ListView)
-        try:
-            feed_list.clear()
-        except ValueError:
-            logger.debug("Ignored ListView hover race during refresh")
+        tree = self.query_one("#feed-tree", Tree)
+        tree.clear()
+        for category, group_urls in self._grouped_urls(urls):
+            group_node = tree.root.add(self._group_label(category, group_urls),
+                                       _GroupData(category, group_urls),
+                                       expand=False)
+            for u in group_urls:
+                result = fetched.get(u)
+                error_text: str | None = None
+                if isinstance(result, Exception):
+                    logger.warning("Feed fetch exception for %s: %s", u, result)
+                    error_text = str(result)
+                elif result is not None:
+                    if result.not_modified:
+                        self._data.touch_cache(u)
+                    elif result.error:
+                        error_text = result.error
+                    else:
+                        if result.etag or result.last_modified:
+                            self._data.save_feed_headers(
+                                u, result.etag, result.last_modified)
+                        self._data.save_cached_result(u, result)
 
-        for idx, url in enumerate(urls):
-            item = ListItem()
-            if idx % 2 == 1:
-                item.add_class("zebra")
-            item._feed_url = url
-
-            result = fetched.get(url)
-            if result is None:
-                cached = self._data.get_cached_result(url)
-                item._feed_result = cached
-                label = self._label_for(url, cached)
-            elif isinstance(result, Exception):
-                logger.warning("Feed fetch exception for %s: %s", url, result)
-                cached = self._data.get_cached_result(url)
-                item._feed_result = cached
-                label = self._label_for(url, cached, f"\u2717 {url} \u2014 {result}")
-            elif result.not_modified:
-                self._data.touch_cache(url)
-                cached = self._data.get_cached_result(url)
-                item._feed_result = cached
-                label = self._label_for(url, cached)
-            elif result.error:
-                cached = self._data.get_cached_result(url)
-                item._feed_result = cached
-                label = self._label_for(url, cached, f"\u2717 {url} \u2014 {result.error}")
-            else:
-                if result.etag or result.last_modified:
-                    self._data.save_feed_headers(url, result.etag, result.last_modified)
-                self._data.save_cached_result(url, result)
-                item._feed_result = result
-                label = self._label_for(url, result)
-
-            item.compose_add_child(Label(label))
-            feed_list.append(item)
+                label = self._feed_label(u)
+                if error_text:
+                    label.append(
+                        f"\u2717 {error_text}",
+                        style="bold red",
+                    )
+                group_node.add_leaf(label, _FeedData(u))
 
         n = len(urls)
-        self._set_status(f"{n} feed{'s' if n != 1 else ''} \u2014 'a' to add, Enter to browse")
-
-    def _label_for(
-        self, url: str, cached: FeedResult | None, fallback: str | None = None
-    ) -> str:
-        """Build the feed row label with unread badge + category."""
-        if cached:
-            unread = self._data.unread_by_feed(url)
-            cat = self._data.get_category(url)
-            cat_str = f"  [{cat}]" if cat else ""
-            return f"{cached.title}{cat_str}  ({len(cached.articles)}, {unread} unread)"
-        if fallback:
-            return fallback
-        return f"  {url}"
+        self._set_status(
+            f"{n} feed{'s' if n != 1 else ''} \u2014 'a' to add, Enter to browse"
+        )
 
     def _start_spinner(self, msg: str) -> None:
         try:
@@ -354,24 +433,22 @@ class FeedScreen(Screen):
         except Exception as exc:
             logger.debug("Feed status widget not ready: %s", exc)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        item = event.item
-        feed_list = self.query_one("#feed-list", ListView)
-        if item not in feed_list._nodes:
-            # AetherPod lesson: guard against stale selections from a
-            # background refresh that rebuilt the ListView mid-click.
-            logger.debug("Ignoring selection for stale ListItem")
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        node: TreeNode | None = event.node
+        if node is None or node.data is None:
             return
-        result: FeedResult | None = getattr(item, "_feed_result", None)
-        url: str | None = getattr(item, "_feed_url", None)
-        if result is not None and result.error:
-            self._set_status(f"\u2717 {result.error}")
-            self.notify(f"Cannot browse: {result.error}", severity="error", timeout=4)
+        data = node.data
+        if isinstance(data, _GroupData):
+            node.toggle()
             return
-
-        if url is not None:
-            if result is None:
-                result = FeedResult(title=url, articles=[])
+        if isinstance(data, _FeedData):
+            url = data.url
+            cached = self._data.get_cached_result(url)
+            if cached is not None and cached.error:
+                self._set_status(f"\u2717 {cached.error}")
+                self.notify(f"Cannot browse: {cached.error}", severity="error", timeout=4)
+                return
+            result = cached or FeedResult(title=url, articles=[])
             self.app.push_screen(ArticleScreen(result, url, self._data))
             self._maybe_refresh_selected(url)
 

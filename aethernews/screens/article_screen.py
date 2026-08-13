@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-12 18:02 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
 # Path: aethernews/screens/article_screen.py
 # Purpose: Article browser for a single feed — read/unread, star, sort, reader.
 
@@ -17,7 +17,7 @@ from textual.widgets import DataTable, Footer, Header
 from aethernews.engine import DataManager
 from aethernews.models import Article, FeedResult
 from aethernews.rss import fetch_feed_async
-from aethernews.screens.detail_help import HelpScreen, ReaderScreen
+from aethernews.screens.detail_help import HelpScreen, NextUnreadRequested, ReaderScreen
 from aethernews.screens.helpers import format_date
 from aethernews.widgets import LoadingSpinner
 
@@ -32,12 +32,25 @@ class ArticleScreen(Screen):
         Binding("n", "next_unread", "Next unread"),
         Binding("space", "toggle_read", "Read/Unread"),
         Binding("m", "toggle_read", "Mark"),
+        Binding("shift+m", "mark_all_unread", "All Unread", key_display="M"),
         Binding("asterisk", "toggle_star", "Star", key_display="*"),
         Binding("s", "toggle_sort", "Sort"),
         Binding("t", "toggle_theme", "Theme"),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
         Binding("q", "quit", "Quit"),
         Binding("question_mark", "show_help", "Help", key_display="?"),
     ]
+
+    def action_cursor_up(self) -> None:
+        table = self.query_one("#article-list", DataTable)
+        if table.cursor_row is not None and table.cursor_row > 0:
+            table.move_cursor(row=table.cursor_row - 1)
+
+    def action_cursor_down(self) -> None:
+        table = self.query_one("#article-list", DataTable)
+        if table.cursor_row is not None and table.cursor_row < len(table.rows) - 1:
+            table.move_cursor(row=table.cursor_row + 1)
 
     def __init__(
         self,
@@ -50,7 +63,7 @@ class ArticleScreen(Screen):
         self._feed_url = feed_url or feed_result.title
         self._data = data_manager
         self._show_unread_only = False
-        self._sort_state = 0
+        self._sort_state = 1  # newest-first is the default
         self._last_unread = 0
         self._row_keys: dict[str, str] = {}
         self._articles_by_row: dict[str, Article] = {}
@@ -119,6 +132,14 @@ class ArticleScreen(Screen):
         self._update_row(article)
         self._update_status_bar()
 
+    def action_mark_all_unread(self) -> None:
+        count = self._data.mark_all_unread(self._feed_url)
+        self.notify(
+            f"Marked {count} article(s) unread",
+            severity="information", timeout=2,
+        )
+        self._populate()
+
     def action_toggle_star(self) -> None:
         article = self._selected_article()
         if not article:
@@ -137,9 +158,9 @@ class ArticleScreen(Screen):
         article = self._selected_article()
         if not article:
             return
-        self._data.mark_read(article.article_id or "")
+        # Matches AetherPod: opening an article does NOT mark it read.
+        # Only an explicit space/m toggle does.
         self.app.push_screen(ReaderScreen(article, self._data))
-        self._update_row(article)
         self._update_status_bar()
 
     def action_next_unread(self) -> None:
@@ -156,6 +177,12 @@ class ArticleScreen(Screen):
                 self.notify("Next unread", severity="information", timeout=1)
                 return
         self.notify("No unread articles", severity="information", timeout=2)
+
+    def on_next_unread_requested(
+        self, event: NextUnreadRequested
+    ) -> None:
+        """Jump to the next unread when the reader asks (bubbled from App)."""
+        self.action_next_unread()
 
     def _selected_article(self) -> Article | None:
         table = self.query_one("#article-list", DataTable)
@@ -228,7 +255,12 @@ class ArticleScreen(Screen):
         status.append("]", style="dim")
 
         title = (article.title[:51] + "\u2026") if len(article.title) > 51 else article.title
-        title_text = Text(title, style="bold" if unread else "dim")
+        if unread:
+            unread_color = self.app.get_theme(self.app.theme).variables.get(
+                "unread", "cyan")
+            title_text = Text(title, style=f"bold {unread_color}")
+        else:
+            title_text = Text(title, style="dim")
 
         date_text = Text(format_date(article.published), style="dim")
 
