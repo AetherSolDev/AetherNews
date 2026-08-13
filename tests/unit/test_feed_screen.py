@@ -223,6 +223,58 @@ def test_opening_reader_does_not_mark_read(state_path):
     run()
 
 
+def test_recency_unread_default_sort(state_path):
+    # Recency primary (today > yesterday > older), unread tiebreak within a day.
+    import datetime as dt
+    dm = DataManager(state_path)
+    now = dt.datetime.now(dt.timezone.utc)
+    def h(n):
+        return (now - dt.timedelta(hours=n)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def d(n):
+        return (now - dt.timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dm.add_feed("https://example.com/t.xml")
+    dm.set_category("https://example.com/t.xml", "Tech")
+    dm.save_cached_result("https://example.com/t.xml", FeedResult(
+        title="LWN", articles=[
+            _article("Old unread 5d", "a1", d(5)),
+            _article("Old read 4d", "a2", d(4)),
+            _article("Today read 1h", "a3", h(1)),
+            _article("Today unread 2h", "a4", h(2)),
+            _article("Yesterday unread 30h", "a5", h(30)),
+        ]))
+    dm.mark_read("a2")
+    dm.mark_read("a3")
+    def run():
+        app = AetherNews(data_path=state_path)
+        async def main():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                from aethernews.screens.feed_screen import _FeedData, _GroupData
+                tree = app.screen.query_one("#feed-tree", Tree)
+                g = next(n for n in tree._tree_nodes.values()
+                         if isinstance(n.data, _GroupData))
+                tree.move_cursor(g)
+                await pilot.press("right")
+                await pilot.pause()
+                f = next(n for n in tree._tree_nodes.values()
+                         if isinstance(n.data, _FeedData))
+                tree.move_cursor(f)
+                tree.select_node(f)
+                await pilot.pause()
+                s = app.screen
+                assert s._sort_state == 0  # recency+unread default
+                titles = [a.title for a in s._sorted_articles()]
+                assert titles == [
+                    "Today unread 2h",
+                    "Today read 1h",
+                    "Yesterday unread 30h",
+                    "Old read 4d",
+                    "Old unread 5d",
+                ]
+        asyncio.run(main())
+    run()
+
+
 def test_groups_collapsed_by_default_and_toggle(state_path):
     _seed_state(state_path)
     def run():

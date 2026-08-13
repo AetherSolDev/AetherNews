@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:29 CT (America/Chicago)
 # Path: aethernews/screens/detail_help.py
 # Purpose: Modal overlays — ReaderScreen (full article) and HelpScreen.
 
@@ -195,7 +195,7 @@ class HelpScreen(Screen[None]):
             ("M", "Mark all articles unread"),
             ("*", "Toggle starred"),
             ("u", "Refresh this feed"),
-            ("s", "Sort: newest \u2194 unread-first \u2194 A\u2192Z"),
+            ("s", "Sort: recency+unread \u2194 newest \u2194 A\u2192Z"),
             ("\u2191 / \u2193", "Move selection (arrow keys)"),
             ("t", "Toggle dark/light theme"),
             ("q", "Quit AetherNews"),

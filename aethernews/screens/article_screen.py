@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
+# Last Edited: 2026-08-13 14:29 CT (America/Chicago)
 # Path: aethernews/screens/article_screen.py
 # Purpose: Article browser for a single feed — read/unread, star, sort, reader.
 
@@ -18,7 +18,7 @@ from aethernews.engine import DataManager
 from aethernews.models import Article, FeedResult
 from aethernews.rss import fetch_feed_async
 from aethernews.screens.detail_help import HelpScreen, NextUnreadRequested, ReaderScreen
-from aethernews.screens.helpers import format_date
+from aethernews.screens.helpers import day_bucket, format_date, is_recent, parse_date
 from aethernews.widgets import LoadingSpinner
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class ArticleScreen(Screen):
         self._feed_url = feed_url or feed_result.title
         self._data = data_manager
         self._show_unread_only = False
-        self._sort_state = 1  # newest-first is the default
+        self._sort_state = 0  # recency+unread is the default
         self._last_unread = 0
         self._row_keys: dict[str, str] = {}
         self._articles_by_row: dict[str, Article] = {}
@@ -150,7 +150,7 @@ class ArticleScreen(Screen):
 
     def action_toggle_sort(self) -> None:
         self._sort_state = (self._sort_state + 1) % 3
-        labels = {0: "unread-first", 1: "newest-first", 2: "A\u2192Z"}
+        labels = {0: "recency+unread", 1: "newest-first", 2: "A\u2192Z"}
         self.notify(f"Sort: {labels[self._sort_state]}", severity="information", timeout=1)
         self._populate()
 
@@ -199,9 +199,16 @@ class ArticleScreen(Screen):
 
     def _sorted_articles(self) -> list[Article]:
         if self._sort_state == 0:
+            # Recency primary, unread tiebreak: today > yesterday > older,
+            # and within the same day unread floats above read.
             def key(a: Article):
-                return (0 if self._data.is_unread(a.article_id or "") else 1,
-                        a.published or "")
+                dt = parse_date(a.published)
+                ts = dt.timestamp() if dt else 0.0
+                return (
+                    day_bucket(a.published),
+                    0 if self._data.is_unread(a.article_id or "") else 1,
+                    -ts,
+                )
             return sorted(self._feed.articles, key=key)
         if self._sort_state == 1:
             return sorted(
@@ -262,7 +269,11 @@ class ArticleScreen(Screen):
         else:
             title_text = Text(title, style="dim")
 
-        date_text = Text(format_date(article.published), style="dim")
+        if is_recent(article.published):
+            date_style = "bold cyan"
+        else:
+            date_style = "dim"
+        date_text = Text(format_date(article.published), style=date_style)
 
         return (status, title_text, date_text)
 
@@ -289,7 +300,7 @@ class ArticleScreen(Screen):
         starred = sum(
             1 for a in self._feed.articles if self._data.is_starred(a.article_id or "")
         )
-        sort_labels = {0: "unread-first", 1: "newest", 2: "A-Z"}
+        sort_labels = {0: "recency+unread", 1: "newest", 2: "A-Z"}
         filter_label = " [unread]" if self._show_unread_only else ""
 
         t = Text()
