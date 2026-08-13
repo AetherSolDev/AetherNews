@@ -28,6 +28,12 @@
 
 ---
 
+## Screenshots
+
+![Demo](assets/screens/aethernews-demo.gif)
+
+---
+
 ## Features
 
 - **Subscribe** to any RSS/Atom news feed
