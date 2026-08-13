@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 15:51 CT (America/Chicago)
+# Last Edited: 2026-08-13 17:19 CT (America/Chicago)
 # Path: pyproject.toml
 # Purpose: Project metadata and entry point for pip-installable aethernews command.
 
@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aethernews"
-version = "0.8.0"
+version = "0.9.1"
 description = "Terminal RSS News Reader — subscribe to feeds, read articles in your terminal"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,6 +35,14 @@ dependencies = [
     "textual>=0.41,<2.0",
     "aiohttp>=3.9,<4.0",
     "platformdirs>=3.0",
+    "trafilatura>=2.2,<3.0",
+]
+
+[project.optional-dependencies]
+# Headless-browser fallback for sites that block plain HTTP (e.g. The Hill's
+# PerimeterX). Install with: pip install aethernews[browser]
+browser = [
+    "playwright>=1.40,<2.0",
 ]
 
 [project.scripts]

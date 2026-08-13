@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 14:05 CT (America/Chicago)
+# Last Edited: 2026-08-13 17:05 CT (America/Chicago)
 # Path: aethernews/engine.py
 # Purpose: DataManager — state persistence for feeds, unread/starred articles, categories.
 
@@ -52,6 +52,7 @@ class DataManager:
         self._categories: dict[str, str] = {}
         self._feed_headers: dict[str, dict[str, str]] = {}
         self._feed_cache: dict[str, dict[str, Any]] = {}
+        self._fetched_bodies: dict[str, str] = {}
         self._cache_ttl_hours: float = self.DEFAULT_CACHE_TTL_HOURS
         self.load()
 
@@ -73,6 +74,7 @@ class DataManager:
                 self._categories = data.get("categories", {})
                 self._feed_headers = data.get("feed_headers", {})
                 self._feed_cache = data.get("feed_cache", {})
+                self._fetched_bodies = data.get("fetched_bodies", {})
                 self._cache_ttl_hours = float(
                     data.get("cache_ttl_hours", self.DEFAULT_CACHE_TTL_HOURS)
                 )
@@ -90,6 +92,7 @@ class DataManager:
         self._categories = {}
         self._feed_headers = {}
         self._feed_cache = {}
+        self._fetched_bodies = {}
         self._cache_ttl_hours = self.DEFAULT_CACHE_TTL_HOURS
 
     def save(self) -> None:
@@ -105,6 +108,7 @@ class DataManager:
                 "feed_headers": dict(self._feed_headers),
                 "cache_ttl_hours": self._cache_ttl_hours,
                 "feed_cache": dict(self._feed_cache),
+                "fetched_bodies": dict(self._fetched_bodies),
             }
             tmp = self._path.with_suffix(".tmp")
             try:
@@ -229,6 +233,27 @@ class DataManager:
         """Return a copy of the starred article-id set."""
         with self._lock:
             return set(self._starred)
+
+    # ── fetched article bodies ───────────────────────────────────
+
+    def get_fetched_body(self, article_id: str) -> str:
+        """Return the fetched full-text body for an article, or ``""``.
+
+        Populated on demand by the reader's ``f`` action when a feed only
+        provides a summary. Persisted so it's fetched once.
+        """
+        with self._lock:
+            return self._fetched_bodies.get(article_id, "")
+
+    def save_fetched_body(self, article_id: str, body: str) -> None:
+        """Cache the fetched full-text body for an article (persisted)."""
+        with self._lock:
+            if body:
+                self._fetched_bodies[article_id] = body
+            else:
+                self._fetched_bodies.pop(article_id, None)
+        self.save()
+        logger.debug("Cached fetched body for %s", article_id)
 
     # ── categories ─────────────────────────────────────────────────
 

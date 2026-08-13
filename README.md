@@ -47,7 +47,8 @@
 - **Recently-updated markers** — `●` highlights groups and feeds with new
   content in the last 24h
 - **Full-article reader** — HTML converted to clean plain text, scrollable
-  (`j`/`k`/`↑`/`↓`), `o` opens the original in your browser
+  (`j`/`k`/`↑`/`↓`); `f` fetches the full article body when a feed only
+  provides a summary, `o` opens the original in your browser
 - **Read / unread tracking** — `[ ]` unread, `[✓]` read, `[★]` starred;
   `M` marks a whole feed unread
 - **Categories** — tag a feed with `c`, rename a whole category from its group
@@ -121,6 +122,9 @@ aethernews list      # List subscribed feeds
 | `M` | Mark all articles unread |
 | `*` | Toggle starred |
 | `n` | Jump to next unread |
+| `f` | Fetch full article in reader (if only a summary) |
+| `o` | Open article in browser |
+| `j` / `k` | Scroll reader down / up |
 | `t` | Toggle theme |
 | `q` | Quit |
 | `?` | Help |

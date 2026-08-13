@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 14:29 CT (America/Chicago)
+# Last Edited: 2026-08-13 17:05 CT (America/Chicago)
 # Path: aethernews/screens/detail_help.py
 # Purpose: Modal overlays — ReaderScreen (full article) and HelpScreen.
 
@@ -57,6 +57,7 @@ class ReaderScreen(Screen[None]):
     BINDINGS = [
         Binding("escape,enter,q", "dismiss", "Close"),
         Binding("o", "open_link", "Open in browser", key_display="o"),
+        Binding("f", "fetch_body", "Fetch article", key_display="f"),
         Binding("s", "toggle_star", "Star"),
         Binding("j,down", "scroll_down", "Down", key_display="j/↓"),
         Binding("k,up", "scroll_up", "Up", key_display="k/↑"),
@@ -76,11 +77,13 @@ class ReaderScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        art = self._article
         # Matches AetherPod: viewing an article does NOT mark it read.
         # Only an explicit space/m toggle does.
         self._update_star_header()
+        self._render_body()
 
+    def _render_body(self) -> None:
+        art = self._article
         body = Text()
         meta = []
         if art.published:
@@ -93,12 +96,38 @@ class ReaderScreen(Screen[None]):
             body.append("  " + "   ·   ".join(meta), style="dim")
             body.append("\n\n", style="")
 
-        article_text = html_to_text(art.content or art.summary or "")
+        fetched = self._data.get_fetched_body(art.article_id or "")
+        article_text = html_to_text(
+            fetched or art.content or art.summary or ""
+        )
+        if fetched:
+            body.append("\u2726 Fetched full article\n", style="bold cyan")
         if article_text:
             body.append(article_text, style="")
         else:
-            body.append("  (No content)", style="dim")
+            body.append("  (No content \u2014 press 'f' to fetch the full article)",
+                        style="dim")
         self.query_one("#reader-body-content", Static).update(body)
+
+    async def action_fetch_body(self) -> None:
+        art = self._article
+        if not art.url:
+            self.notify("No article link to fetch", severity="warning", timeout=2)
+            return
+        if self._data.get_fetched_body(art.article_id or ""):
+            self.notify("Full article already fetched", severity="information", timeout=2)
+            self._render_body()
+            return
+        from aethernews.fetcher import fetch_article_text
+
+        self.notify("Fetching full article\u2026", severity="information", timeout=3)
+        text = await fetch_article_text(art.url)
+        if text:
+            self._data.save_fetched_body(art.article_id or "", text)
+            self._render_body()
+            self.notify("Full article fetched", severity="information", timeout=2)
+        else:
+            self.notify("Could not extract article text", severity="error", timeout=3)
 
     def action_toggle_star(self) -> None:
         now_starred = self._data.toggle_starred(self._article.article_id or "")
@@ -204,6 +233,7 @@ class HelpScreen(Screen[None]):
         "Reader": [
             ("Esc / q", "Close reader"),
             ("j / k / \u2191 / \u2193", "Scroll down / up"),
+            ("f", "Fetch full article (if only a summary)"),
             ("o", "Open article URL in browser"),
             ("s", "Toggle starred"),
             ("n", "Next unread article"),

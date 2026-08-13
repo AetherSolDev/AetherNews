@@ -319,6 +319,26 @@ class TestOpml:
         assert dm.opml_import(str(tmp_path / "nope.opml")) == 0
 
 
+class TestFetchedBodies:
+    def test_get_fetched_body_default_empty(self, dm: DataManager) -> None:
+        assert dm.get_fetched_body("a1") == ""
+
+    def test_save_and_get_fetched_body(self, dm: DataManager) -> None:
+        dm.save_fetched_body("a1", "Full article body text")
+        assert dm.get_fetched_body("a1") == "Full article body text"
+
+    def test_save_empty_clears(self, dm: DataManager) -> None:
+        dm.save_fetched_body("a1", "Body")
+        dm.save_fetched_body("a1", "")
+        assert dm.get_fetched_body("a1") == ""
+
+    def test_fetched_body_persists_across_reload(self, temp_state: Path) -> None:
+        dm1 = DataManager(temp_state)
+        dm1.save_fetched_body("a1", "Persisted body")
+        dm2 = DataManager(temp_state)
+        assert dm2.get_fetched_body("a1") == "Persisted body"
+
+
 class TestFeedFreshness:
     def test_feed_updated_uses_newest_article(self, dm: DataManager) -> None:
         dm.add_feed("https://example.com/feed.xml")
