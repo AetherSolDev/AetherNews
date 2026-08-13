@@ -41,6 +41,19 @@ def _tree_nodes(tree):
     return out
 
 
+async def _skip_splash(pilot) -> None:
+    """Dismiss the startup splash so tests land on FeedScreen.
+
+    Uses action_dismiss() directly rather than a keypress so the dismiss
+    key has no side effects on the FeedScreen that follows.
+    """
+    from aethernews.screens.splash import SplashScreen
+
+    if isinstance(pilot.app.screen, SplashScreen):
+        pilot.app.screen.action_dismiss()
+        await pilot.pause()
+
+
 @pytest.fixture
 def state_path():
     return Path(tempfile.mkstemp(suffix=".json")[1])
@@ -53,6 +66,7 @@ def test_groups_rendered_and_newest_first(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 screen = app.screen
                 assert isinstance(screen, FeedScreen)
                 tree = screen.query_one("#feed-tree", Tree)
@@ -77,6 +91,7 @@ def test_uncategorized_group_appears(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 tree = app.screen.query_one("#feed-tree", Tree)
                 labels = [l for l, _ in _tree_nodes(tree)]
                 assert any(UNCATEGORIZED in l for l in labels)
@@ -91,6 +106,7 @@ def test_feed_selection_browses_to_article_screen(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 tree = app.screen.query_one("#feed-tree", Tree)
                 feed_node = None
                 for node in tree._tree_nodes.values():
@@ -118,6 +134,7 @@ def test_assign_category_via_dialog(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 from aethernews.screens.dialogs import CategoryDialog
                 from aethernews.screens.feed_screen import _FeedData, _GroupData
                 tree = app.screen.query_one("#feed-tree", Tree)
@@ -162,6 +179,7 @@ def test_rename_category_via_group_node(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 from aethernews.screens.dialogs import CategoryDialog
                 tree = app.screen.query_one("#feed-tree", Tree)
                 group_node = next(
@@ -199,6 +217,7 @@ def test_opening_reader_does_not_mark_read(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 from aethernews.screens.feed_screen import _FeedData, _GroupData
                 tree = app.screen.query_one("#feed-tree", Tree)
                 g = next(n for n in tree._tree_nodes.values()
@@ -249,6 +268,7 @@ def test_recency_unread_default_sort(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 from aethernews.screens.feed_screen import _FeedData, _GroupData
                 tree = app.screen.query_one("#feed-tree", Tree)
                 g = next(n for n in tree._tree_nodes.values()
@@ -282,6 +302,7 @@ def test_groups_collapsed_by_default_and_toggle(state_path):
         async def main():
             async with app.run_test() as pilot:
                 await pilot.pause()
+                await _skip_splash(pilot)
                 tree = app.screen.query_one("#feed-tree", Tree)
                 group_nodes = [
                     node for node in tree._tree_nodes.values()

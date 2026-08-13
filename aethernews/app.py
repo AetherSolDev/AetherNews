@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 13:42 CT (America/Chicago)
+# Last Edited: 2026-08-13 15:43 CT (America/Chicago)
 # Path: aethernews/app.py
 # Purpose: Main Textual TUI application — screen orchestration, CSS, theme toggle.
 
@@ -14,7 +14,7 @@ from textual.binding import Binding
 from aethernews import __version__
 from aethernews.engine import DataManager
 from aethernews.screens.article_screen import ArticleScreen
-from aethernews.screens.feed_screen import FeedScreen
+from aethernews.screens.splash import SplashScreen
 from aethernews.theme import THEMES
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,26 @@ class AetherNews(App):
         margin-top: 1;
     }
 
+    /* ── Splash Screen ─────────────────────────────────── */
+    SplashScreen {
+        align: center middle;
+        background: $surface;
+    }
+
+    SplashScreen #splash-content {
+        width: auto;
+        height: auto;
+        margin: 1 2;
+    }
+
+    SplashScreen #splash-hint {
+        dock: bottom;
+        width: 100%;
+        text-align: center;
+        color: $text-muted;
+        padding-bottom: 1;
+    }
+
     /* ── Reader Screen ─────────────────────────────────── */
     ReaderScreen {
         align: center middle;
@@ -192,8 +212,11 @@ class AetherNews(App):
         self.theme = "aethernews-dark"
         n_feeds = len(self._data.get_feeds())
         n_unread = self._data.total_unread()
+        n_categories = len(self._data.get_categories_list())
         logger.info("AetherNews starting — %d feed(s), %d unread", n_feeds, n_unread)
-        self.push_screen(FeedScreen(self._data))
+        self.push_screen(
+            SplashScreen(self._data, n_feeds, n_unread, n_categories)
+        )
         self.set_interval(1, self._poll_article_status)
 
     def on_unmount(self) -> None:
