@@ -1,5 +1,5 @@
 # Created: 2026-08-13
-# Last Edited: 2026-08-13 17:19 CT (America/Chicago)
+# Last Edited: 2026-08-14 16:43 CT (America/Chicago)
 # Path: tests/unit/test_fetcher.py
 # Purpose: Unit tests for fetch_article_text (trafilatura extraction) — no external network.
 
@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from aethernews.fetcher import fetch_article_text
+from aethernews.fetcher import _is_blocked_page, fetch_article_text
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -104,3 +104,56 @@ def test_browser_fallback_skipped_when_http_succeeds(monkeypatch) -> None:
     text = asyncio.run(fetcher.fetch_article_text("https://example.com/x", timeout=5))
     assert "Fast path body." in text
     assert "browser" not in called
+
+
+def test_is_blocked_page_detects_akamai_denial() -> None:
+    denial = (
+        "Access Denied\n"
+        "You don't have permission to access "
+        '"http://www.khou.com/article/..." on this server.\n'
+        "Reference #18.2f3b2f17.1786734657.18d6408a\n"
+        "https://errors.edgesuite.net/18.2f3b2f17.1786734657.18d6408a"
+    )
+    assert _is_blocked_page(denial) is True
+    assert _is_blocked_page(None) is True
+    assert _is_blocked_page("") is True
+
+
+def test_is_blocked_page_passes_real_content() -> None:
+    article = (
+        "A truck hit the Houston Avenue bridge over I-10, blocking two "
+        "eastbound lanes and creating delays for drivers heading toward "
+        "downtown Houston. Officials expect the lanes to reopen by evening."
+    )
+    assert _is_blocked_page(article) is False
+
+
+def test_browser_fallback_rejects_denial_page(monkeypatch) -> None:
+    """A denial page that exceeds the length threshold is still rejected."""
+    from aethernews import fetcher
+
+    called = {}
+
+    def fake_http_fetch(url, timeout):
+        called["http"] = True
+
+    denial = (
+        "Access Denied\n"
+        "You don't have permission to access the requested resource on this "
+        "server. Reference #18.2f3b2f17.1786734657.18d6408a\n"
+        "https://errors.edgesuite.net/18.2f3b2f17.1786734657.18d6408a"
+    )
+    # Long enough to trip the naive >200 threshold.
+    denial = denial + "\n" + "x" * 300
+
+    def fake_browser_fetch(url, timeout):
+        called["browser"] = True
+        return denial
+
+    monkeypatch.setattr(fetcher, "_http_fetch", fake_http_fetch)
+    monkeypatch.setattr(fetcher, "_browser_fetch", fake_browser_fetch)
+
+    text = asyncio.run(fetcher.fetch_article_text("https://example.com/x", timeout=5))
+    assert text is None
+    assert called.get("http") is True
+    assert called.get("browser") is True

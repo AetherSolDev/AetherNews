@@ -1,5 +1,5 @@
 # Created: 2026-08-12
-# Last Edited: 2026-08-13 17:19 CT (America/Chicago)
+# Last Edited: 2026-08-14 16:43 CT (America/Chicago)
 # Path: pyproject.toml
 # Purpose: Project metadata and entry point for pip-installable aethernews command.
 
@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aethernews"
-version = "0.9.1"
+version = "0.9.2"
 description = "Terminal RSS News Reader — subscribe to feeds, read articles in your terminal"
 readme = "README.md"
 requires-python = ">=3.9"
